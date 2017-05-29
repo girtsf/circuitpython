@@ -234,6 +234,8 @@ SRC_COMMON_HAL = \
 	analogio/__init__.c \
 	analogio/AnalogIn.c \
 	analogio/AnalogOut.c \
+	audiobusio/__init__.c \
+	audiobusio/PDMIn.c \
 	audioio/__init__.c \
 	audioio/AudioOut.c \
 	digitalio/__init__.c \
