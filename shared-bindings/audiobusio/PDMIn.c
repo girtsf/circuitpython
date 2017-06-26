@@ -78,10 +78,10 @@ STATIC mp_obj_t audiobusio_pdmin_make_new(const mp_obj_type_t *type, size_t n_ar
     self->base.type = &audiobusio_pdmin_type;
 
     // TODO(tannewt): Parse these from the args rather than hard coding them.
-    uint32_t frequency = 8000;
-    uint8_t bit_depth = 8;
+    uint32_t frequency = 16000;
+    uint8_t bit_depth = 16;
     bool mono = true;
-    uint8_t oversample = 128;
+    uint8_t oversample = 64;
 
     common_hal_audiobusio_pdmin_construct(self, clock_pin, data_pin, frequency, bit_depth, mono, oversample);
 
@@ -142,7 +142,7 @@ STATIC mp_obj_t audiobusio_pdmin_obj_record(mp_obj_t self_obj, mp_obj_t destinat
         if (bufinfo.len < length) {
             mp_raise_ValueError("Target buffer cannot hold destination_length bytes.");
         }
-        common_hal_audiobusio_pdmin_record_to_buffer(self, ((uint8_t*)bufinfo.buf), length);
+        common_hal_audiobusio_pdmin_record_to_buffer(self, ((uint16_t*)bufinfo.buf), length);
     }
     return mp_const_none;
 }

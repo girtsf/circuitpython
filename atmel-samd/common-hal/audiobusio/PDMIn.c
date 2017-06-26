@@ -88,12 +88,8 @@ void common_hal_audiobusio_pdmin_construct(audiobusio_pdmin_obj_t* self,
         mp_raise_RuntimeError("Unable to allocate audio DMA block counter.");
     }
 
-    if (frequency != 8000 || bit_depth != 8 || !mono) {
+    if (frequency != 16000 || bit_depth != 16 || !mono || oversample != 64) {
         mp_raise_NotImplementedError("");
-    }
-
-    if (oversample % 32 != 0) {
-        mp_raise_ValueError("Oversample must be multiple of 32.");
     }
 
     // TODO(tannewt): Use the DPLL to get a more precise sampling rate.
@@ -142,19 +138,6 @@ void common_hal_audiobusio_pdmin_construct(audiobusio_pdmin_obj_t* self,
 void common_hal_audiobusio_pdmin_deinit(audiobusio_pdmin_obj_t* self) {
     i2s_disable(&self->i2s_instance);
     i2s_reset(&self->i2s_instance);
-}
-
-// Algorithm from https://en.wikipedia.org/wiki/Hamming_weight
-static uint8_t hamming_weight(uint8_t word) {
-    uint8_t b0 = (word >> 0) & 0x55;
-    uint8_t b1 = (word >> 1) & 0x55;
-    uint8_t c = b0 + b1;
-    uint8_t d0 = (c >> 0) & 0x33;
-    uint8_t d2 = (c >> 2) & 0x33;
-    uint8_t e = d0 + d2;
-    uint8_t f0 = (e >> 0) & 0x0f;
-    uint8_t f4 = (e >> 4) & 0x0f;
-    return f0 + f4;
 }
 
 static void setup_dma(audiobusio_pdmin_obj_t* self, uint32_t length,
@@ -216,7 +199,32 @@ void stop_dma(audiobusio_pdmin_obj_t* self) {
     dma_abort_job(&audio_dma);
 }
 
-uint32_t common_hal_audiobusio_pdmin_record_to_buffer(audiobusio_pdmin_obj_t* self, uint8_t* output_buffer, uint32_t length) {
+static const uint16_t sinc_filter[64] = {
+    0, 1, 6, 16, 29, 49, 75, 108,
+    149, 200, 261, 334, 418, 514, 622, 742,
+    872, 1012, 1161, 1315, 1472, 1631, 1787, 1938,
+    2081, 2212, 2329, 2429, 2509, 2568, 2604, 2616,
+    2604, 2568, 2509, 2429, 2329, 2212, 2081, 1938,
+    1787, 1631, 1472, 1315, 1161, 1012, 872, 742,
+    622, 514, 418, 334, 261, 200, 149, 108,
+    75, 49, 29, 16, 6, 1, 0, 0
+};
+
+static uint16_t filter_sample(uint8_t pdm_samples[8]) {
+    uint16_t sample = 0;
+    for (uint8_t i = 0; i < 8; i++) {
+        uint8_t pdm = pdm_samples[i];
+        for (uint8_t j = 0; j < 8; j++) {
+            if (pdm % 2 == 1) {
+                sample += sinc_filter[i * 8 + j];
+            }
+            pdm /= 2;
+        }
+    }
+    return sample;
+}
+
+uint32_t common_hal_audiobusio_pdmin_record_to_buffer(audiobusio_pdmin_obj_t* self, uint16_t* output_buffer, uint32_t length) {
     // Write the wave file header.
 
     // We allocate two 256 byte buffers on the stack to use for double buffering.
@@ -242,14 +250,6 @@ uint32_t common_hal_audiobusio_pdmin_record_to_buffer(audiobusio_pdmin_obj_t* se
     uint32_t buffers_processed = 0;
     uint32_t total_bytes = 0;
 
-    int32_t sum1 = 0;
-    int32_t sum2 = 0;
-    int32_t comb1_1 = 0;
-    int32_t comb1_2 = 0;
-    int32_t comb2_1 = 0;
-    int32_t comb2_2 = 0;
-    int32_t sample_average = 0;
-    bool sample_average_valid = false;
     uint64_t start_ticks = ticks_ms;
     while (total_bytes < length) {
         // Wait for the next buffer to fill
@@ -263,7 +263,6 @@ uint32_t common_hal_audiobusio_pdmin_record_to_buffer(audiobusio_pdmin_obj_t* se
         }
         // Throw away the first ~10ms of data because thats during mic start up.
         if (ticks_ms - start_ticks < 10) {
-            mp_printf(&mp_plat_print, "skipping buffer\n");
             buffers_processed++;
             continue;
         }
@@ -273,44 +272,12 @@ uint32_t common_hal_audiobusio_pdmin_record_to_buffer(audiobusio_pdmin_obj_t* se
             buffer = second_buffer;
             descriptor = &second_descriptor;
         }
-        // Decimate the last buffer
-        // A CIC filter based on: https://curiouser.cheshireeng.com/2015/01/16/pdm-in-a-tiny-cpu/
-        int32_t buffer_sum = 0;
+        // Decimate and filter the last buffer
         int32_t samples_gathered = descriptor->BTCNT.reg / words_per_sample;
         for (uint16_t i = 0; i < samples_gathered; i++) {
-            for (uint8_t j = 0; j < self->bytes_per_sample; j++) {
-                // We use hamming weight to determine the value of each byte
-                // rather than a look up table to save memory. This is
-                // considered the first stage.
-                int16_t one_count = hamming_weight(buffer[i * self->bytes_per_sample + j]);
-                sum1 += one_count - (8 - one_count);
-                sum2 += sum1;
-            }
-            int tmp = sum2 - comb1_2;
-            comb1_2 = comb1_1;
-            comb1_1 = sum2;
-
-            int16_t sample = tmp - comb2_2;
-            comb2_2 = comb2_1;
-            comb2_1 = tmp;
-
-            buffer_sum += sample;
-            int16_t adjusted_sample = sample - sample_average;
-
-            // Theres a large DC offset so we need to wait one buffer's worth
-            // before we start recording samples.
-            if (sample_average_valid) {
-                // This filter gives ~12 bits of significance, four from the
-                // hamming weight sum and nine (maybe) from the second stage.
-                // So, shift away the low bits to pack it into a single unsigned
-                // byte.
-                output_buffer[total_bytes] = (adjusted_sample >> 4) + 128;
-                total_bytes++;
-            }
+            output_buffer[total_bytes] = filter_sample(buffer + i * self->bytes_per_sample);
+            total_bytes += 1;
         }
-        sample_average = buffer_sum / samples_gathered;
-        sample_average_valid = true;
-
         buffers_processed++;
 
         if (length - total_bytes < samples_per_buffer) {

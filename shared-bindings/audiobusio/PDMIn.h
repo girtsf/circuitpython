@@ -37,7 +37,7 @@ void common_hal_audiobusio_pdmin_construct(audiobusio_pdmin_obj_t* self,
     const mcu_pin_obj_t* clock_pin, const mcu_pin_obj_t* data_pin,
     uint32_t frequency, uint8_t bit_depth, bool mono, uint8_t oversample);
 void common_hal_audiobusio_pdmin_deinit(audiobusio_pdmin_obj_t* self);
-uint32_t common_hal_audiobusio_pdmin_record_to_buffer(audiobusio_pdmin_obj_t* self, uint8_t* buffer, uint32_t length);
+uint32_t common_hal_audiobusio_pdmin_record_to_buffer(audiobusio_pdmin_obj_t* self, uint16_t* buffer, uint32_t length);
 // TODO(tannewt): Add record to file
 
 #endif // __MICROPY_INCLUDED_SHARED_BINDINGS_AUDIOBUSIO_AUDIOOUT_H__
