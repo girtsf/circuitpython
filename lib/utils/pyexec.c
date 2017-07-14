@@ -122,7 +122,9 @@ STATIC int parse_compile_execute(void *source, mp_parse_input_kind_t input_kind,
             if (mp_obj_is_exception_instance(return_value)) {
                 size_t n, *values;
                 mp_obj_exception_get_traceback(return_value, &n, &values);
-                result->exception_line = values[n - 2];
+                if (values != NULL) {
+                    result->exception_line = values[n - 2];
+                }
             }
         }
     }
