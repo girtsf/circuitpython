@@ -100,14 +100,6 @@ try:
 except RuntimeError:
     print('RuntimeError')
 
-# case where close is propagated up to a built-in iterator
-def gen8():
-    g = reversed([2, 1])
-    yield from g
-g = gen8()
-print(next(g))
-g.close()
-
 # case with a user-defined close method
 class Iter:
     def __iter__(self):
